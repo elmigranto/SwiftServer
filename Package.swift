@@ -5,10 +5,22 @@ import PackageDescription
 
 let package = Package(
     name: "SwiftServer",
+
+    dependencies: [
+      .package(url: "https://github.com/apple/swift-nio.git", exact: "2.65.0")
+    ],
+
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
         // Targets can depend on other targets in this package and products from dependencies.
         .executableTarget(
-            name: "SwiftServer"),
+            name: "SwiftServer",
+            dependencies: [
+              .product(
+                name: "NIOHTTP1",
+                package: "swift-nio"
+              )
+            ]
+        ),
     ]
 )
