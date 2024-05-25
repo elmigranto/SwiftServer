@@ -1,7 +1,8 @@
 /* Goals
 
   - [x] make an HTTP server that serves "Hello, world!";
-  - [ ] check out the code;
+  - [x] check out the code;
+  - [ ] escape SwfitNIO handlers;
   - [ ] make it talk to Postgres and return `select now()` instead;
   - [ ] run it on Ubuntu.
 

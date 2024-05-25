@@ -47,10 +47,7 @@ fileprivate func httpResponseHead(request: HTTPRequestHead, status: HTTPResponse
   return head
 }
 
-final class HTTPHandler: ChannelInboundHandler {
-  public typealias InboundIn = HTTPServerRequestPart
-  public typealias OutboundOut = HTTPServerResponsePart
-
+final class HTTPHandler {
   private enum State {
     case idle
     case waitingForRequestBody
@@ -271,6 +268,12 @@ final class HTTPHandler: ChannelInboundHandler {
 
     context.writeAndFlush(self.wrapOutboundOut(.end(trailers)), promise: promise)
   }
+}
+
+// MARK: - Conformance to ChannelInboundHandler
+extension HTTPHandler : ChannelInboundHandler {
+  public typealias InboundIn = HTTPServerRequestPart
+  public typealias OutboundOut = HTTPServerResponsePart
 
   func channelRead(context: ChannelHandlerContext, data: NIOAny) {
     let reqPart = self.unwrapInboundIn(data)

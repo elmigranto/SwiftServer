@@ -9,7 +9,7 @@ struct SwiftServer {
       .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
 
     // Set the handlers that are applied to the accepted Channels
-      .childChannelInitializer(childChannelInitializer(channel:))
+      .childChannelInitializer(childChannelInitializer)
 
     // Enable SO_REUSEADDR for the accepted Channels
       .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
@@ -27,9 +27,9 @@ struct SwiftServer {
     try channel.closeFuture.wait()
   }
 
-  private func childChannelInitializer(channel: Channel) -> EventLoopFuture<Void> {
+  private func childChannelInitializer(_ channel: Channel) -> EventLoopFuture<Void> {
     return channel.pipeline.configureHTTPServerPipeline(withErrorHandling: true).flatMap {
-      channel.pipeline.addHandler(HTTPHandler())
+      channel.pipeline.addHandler(TestHandler())
     }
   }
 }
