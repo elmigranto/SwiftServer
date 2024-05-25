@@ -5,24 +5,26 @@ final class TestHandler : ChannelInboundHandler {
   typealias InboundIn = HTTPServerRequestPart
   typealias OutboundOut = HTTPServerResponsePart
 
+  // Request's state.
   private var state = State.idle
   private var keepAlive = false
-
+  private var head = HTTPRequestHead(version: .http1_1, method: .GET, uri: "")
   private var body = ByteBuffer()
-  private var response = ByteBuffer()
+
+  /// `(request) -> response` function.
+  private let handler: (HTTPRequestHead, ByteBuffer) -> ByteBuffer
+
+  init (_ handler: @escaping (HTTPRequestHead, ByteBuffer) -> ByteBuffer) {
+    self.handler = handler
+  }
 
   func channelRead (context: ChannelHandlerContext, data: NIOAny) {
     switch (unwrapInboundIn(data)) {
       case .head(let head):
         state.requestReceived()
 
-        body.clear()
-        response = ByteBuffer(string: "\(head)\r\n")
-
-        let head = createResponseHead(request: head, status: .ok)
-//        head.headers.add(name: "content-length", value: String(response!.readableBytes))
-
-        context.write(wrapOutboundOut(.head(head)), promise: nil)
+        self.head = head
+        context.write(wrapOutboundOut(.head(createResponseHead(request: head, status: .ok))), promise: nil)
 
       case .body(var buf):
         // TODO: Do not accept gigabytes of data.
@@ -30,8 +32,10 @@ final class TestHandler : ChannelInboundHandler {
       case .end(_):
         self.state.requestComplete()
 
-        response.writeString("\r\nRead \(body.readableBytes) bytes")
-        context.write(wrapOutboundOut(.body(.byteBuffer(response.slice()))), promise: nil)
+        // TODO: async / await
+        // TODO: try / cath (maybe?)
+        let reply = handler(head, body.slice()).slice()
+        context.write(wrapOutboundOut(.body(.byteBuffer(reply))), promise: nil)
         completeResponse(context)
     }
   }

@@ -1,7 +1,14 @@
 import NIOCore
+import NIOHTTP1
 import NIOPosix
 
 struct SwiftServer {
+  private let handler: (HTTPRequestHead, ByteBuffer) -> ByteBuffer
+
+  init (_ handler: @escaping (HTTPRequestHead, ByteBuffer) -> ByteBuffer) {
+    self.handler = handler
+  }
+
   func listen (hostname: String, portNumber: UInt16) throws {
     let socketBootstrap = ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
     // Specify backlog and enable SO_REUSEADDR for the server itself
@@ -29,7 +36,7 @@ struct SwiftServer {
 
   private func childChannelInitializer(_ channel: Channel) -> EventLoopFuture<Void> {
     return channel.pipeline.configureHTTPServerPipeline(withErrorHandling: true).flatMap {
-      channel.pipeline.addHandler(TestHandler())
+      channel.pipeline.addHandler(TestHandler(handler))
     }
   }
 }
