@@ -29,10 +29,7 @@ struct SwiftServer {
 
   private func childChannelInitializer(channel: Channel) -> EventLoopFuture<Void> {
     return channel.pipeline.configureHTTPServerPipeline(withErrorHandling: true).flatMap {
-      channel.pipeline.addHandler(HTTPHandler(
-        fileIO: NonBlockingFileIO(threadPool: .singleton),
-        htdocsPath: "/dev/null/"
-      ))
+      channel.pipeline.addHandler(HTTPHandler())
     }
   }
 }

@@ -23,15 +23,6 @@ fileprivate extension String {
       return nil
     }
   }
-
-  func containsDotDot() -> Bool {
-    for idx in self.indices {
-      if self[idx] == "." && idx < self.index(before: self.endIndex) && self[self.index(after: idx)] == "." {
-        return true
-      }
-    }
-    return false
-  }
 }
 
 fileprivate func httpResponseHead(request: HTTPRequestHead, status: HTTPResponseStatus, headers: HTTPHeaders = HTTPHeaders()) -> HTTPResponseHead {
@@ -56,12 +47,7 @@ fileprivate func httpResponseHead(request: HTTPRequestHead, status: HTTPResponse
   return head
 }
 
-// TODO: Remove File IO and htdocs (we are not going to serve files).
 final class HTTPHandler: ChannelInboundHandler {
-  private enum FileIOMethod {
-    case sendfile
-    case nonblockingFileIO
-  }
   public typealias InboundIn = HTTPServerRequestPart
   public typealias OutboundOut = HTTPServerResponsePart
 
@@ -89,7 +75,6 @@ final class HTTPHandler: ChannelInboundHandler {
   private var buffer: ByteBuffer! = nil
   private var keepAlive = false
   private var state = State.idle
-  private let htdocsPath: String
 
   private var infoSavedRequestHead: HTTPRequestHead?
   private var infoSavedBodyBytes: Int = 0
@@ -97,14 +82,9 @@ final class HTTPHandler: ChannelInboundHandler {
   private var continuousCount: Int = 0
 
   private var handler: ((ChannelHandlerContext, HTTPServerRequestPart) -> Void)?
-  private var handlerFuture: EventLoopFuture<Void>?
-  private let fileIO: NonBlockingFileIO
   private let defaultResponse = "Hello World\r\n"
 
-  public init(fileIO: NonBlockingFileIO, htdocsPath: String) {
-    self.htdocsPath = htdocsPath
-    self.fileIO = fileIO
-  }
+  public init () {}
 
   func handleInfo(context: ChannelHandlerContext, request: HTTPServerRequestPart) {
     switch request {
@@ -280,114 +260,6 @@ final class HTTPHandler: ChannelInboundHandler {
     }
   }
 
-  private func handleFile(context: ChannelHandlerContext, request: HTTPServerRequestPart, ioMethod: FileIOMethod, path: String) {
-    self.buffer.clear()
-
-    func sendErrorResponse(request: HTTPRequestHead, _ error: Error) {
-      var body = context.channel.allocator.buffer(capacity: 128)
-      let response = { () -> HTTPResponseHead in
-        switch error {
-          case let e as IOError where e.errnoCode == ENOENT:
-            body.writeStaticString("IOError (not found)\r\n")
-            return httpResponseHead(request: request, status: .notFound)
-          case let e as IOError:
-            body.writeStaticString("IOError (other)\r\n")
-            body.writeString(e.description)
-            body.writeStaticString("\r\n")
-            return httpResponseHead(request: request, status: .notFound)
-          default:
-            body.writeString("\(type(of: error)) error\r\n")
-            return httpResponseHead(request: request, status: .internalServerError)
-        }
-      }()
-      body.writeString("\(error)")
-      body.writeStaticString("\r\n")
-      context.write(self.wrapOutboundOut(.head(response)), promise: nil)
-      context.write(self.wrapOutboundOut(.body(.byteBuffer(body))), promise: nil)
-      context.writeAndFlush(self.wrapOutboundOut(.end(nil)), promise: nil)
-      context.channel.close(promise: nil)
-    }
-
-    func responseHead(request: HTTPRequestHead, fileRegion region: FileRegion) -> HTTPResponseHead {
-      var response = httpResponseHead(request: request, status: .ok)
-      response.headers.add(name: "Content-Length", value: "\(region.endIndex)")
-      response.headers.add(name: "Content-Type", value: "text/plain; charset=utf-8")
-      return response
-    }
-
-    switch request {
-      case .head(let request):
-        self.keepAlive = request.isKeepAlive
-        self.state.requestReceived()
-        guard !request.uri.containsDotDot() else {
-          let response = httpResponseHead(request: request, status: .forbidden)
-          context.write(self.wrapOutboundOut(.head(response)), promise: nil)
-          self.completeResponse(context, trailers: nil, promise: nil)
-          return
-        }
-        let path = self.htdocsPath + "/" + path
-        let fileHandleAndRegion = self.fileIO.openFile(path: path, eventLoop: context.eventLoop)
-        fileHandleAndRegion.whenFailure {
-          sendErrorResponse(request: request, $0)
-        }
-        fileHandleAndRegion.whenSuccess { (file, region) in
-          switch ioMethod {
-            case .nonblockingFileIO:
-              var responseStarted = false
-              let response = responseHead(request: request, fileRegion: region)
-              if region.readableBytes == 0 {
-                responseStarted = true
-                context.write(self.wrapOutboundOut(.head(response)), promise: nil)
-              }
-              return self.fileIO.readChunked(fileRegion: region,
-                                             chunkSize: 32 * 1024,
-                                             allocator: context.channel.allocator,
-                                             eventLoop: context.eventLoop) { buffer in
-                if !responseStarted {
-                  responseStarted = true
-                  context.write(self.wrapOutboundOut(.head(response)), promise: nil)
-                }
-                return context.writeAndFlush(self.wrapOutboundOut(.body(.byteBuffer(buffer))))
-              }.flatMap { () -> EventLoopFuture<Void> in
-                let p = context.eventLoop.makePromise(of: Void.self)
-                self.completeResponse(context, trailers: nil, promise: p)
-                return p.futureResult
-              }.flatMapError { error in
-                if !responseStarted {
-                  let response = httpResponseHead(request: request, status: .ok)
-                  context.write(self.wrapOutboundOut(.head(response)), promise: nil)
-                  var buffer = context.channel.allocator.buffer(capacity: 100)
-                  buffer.writeString("fail: \(error)")
-                  context.write(self.wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
-                  self.state.responseComplete()
-                  return context.writeAndFlush(self.wrapOutboundOut(.end(nil)))
-                } else {
-                  return context.close()
-                }
-              }.whenComplete { (_: Result<Void, Error>) in
-                _ = try? file.close()
-              }
-            case .sendfile:
-              let response = responseHead(request: request, fileRegion: region)
-              context.write(self.wrapOutboundOut(.head(response)), promise: nil)
-              context.writeAndFlush(self.wrapOutboundOut(.body(.fileRegion(region)))).flatMap {
-                let p = context.eventLoop.makePromise(of: Void.self)
-                self.completeResponse(context, trailers: nil, promise: p)
-                return p.futureResult
-              }.flatMapError { (_: Error) in
-                context.close()
-              }.whenComplete { (_: Result<Void, Error>) in
-                _ = try? file.close()
-              }
-          }
-        }
-      case .end:
-        self.state.requestComplete()
-      default:
-        fatalError("oh noes: \(request)")
-    }
-  }
-
   private func completeResponse(_ context: ChannelHandlerContext, trailers: HTTPHeaders?, promise: EventLoopPromise<Void>?) {
     self.state.responseComplete()
 
@@ -408,20 +280,14 @@ final class HTTPHandler: ChannelInboundHandler {
     }
 
     switch reqPart {
-      case .head(let request):
+      case .head(let request): // Distinguishes /dynamic* from replying with default response.
         if request.uri.unicodeScalars.starts(with: "/dynamic".unicodeScalars) {
           self.handler = self.dynamicHandler(request: request)
           self.handler!(context, reqPart)
           return
-        } else if let path = request.uri.chopPrefix("/sendfile/") {
-          self.handler = { self.handleFile(context: $0, request: $1, ioMethod: .sendfile, path: path) }
-          self.handler!(context, reqPart)
-          return
-        } else if let path = request.uri.chopPrefix("/fileio/") {
-          self.handler = { self.handleFile(context: $0, request: $1, ioMethod: .nonblockingFileIO, path: path) }
-          self.handler!(context, reqPart)
-          return
         }
+
+        print("Non-dynamic")
 
         self.keepAlive = request.isKeepAlive
         self.state.requestReceived()
