@@ -12,9 +12,9 @@ final class TestHandler : ChannelInboundHandler {
   private var body = ByteBuffer()
 
   /// `(request) -> response` function.
-  private let handler: (HTTPRequestHead, ByteBuffer) -> ByteBuffer
+  private let handler: (HTTPRequestHead, ByteBuffer, EventLoopPromise<ByteBuffer>) -> Void
 
-  init (_ handler: @escaping (HTTPRequestHead, ByteBuffer) -> ByteBuffer) {
+  init (_ handler: @escaping (HTTPRequestHead, ByteBuffer, EventLoopPromise<ByteBuffer>) -> Void) {
     self.handler = handler
   }
 
@@ -29,14 +29,25 @@ final class TestHandler : ChannelInboundHandler {
       case .body(var buf):
         // TODO: Do not accept gigabytes of data.
         body.writeBuffer(&buf)
+
       case .end(_):
         self.state.requestComplete()
 
         // TODO: async / await
         // TODO: try / cath (maybe?)
-        let reply = handler(head, body.slice()).slice()
-        context.write(wrapOutboundOut(.body(.byteBuffer(reply))), promise: nil)
-        completeResponse(context)
+        let promise = context.eventLoop.makePromise(of: ByteBuffer.self)
+        handler(head, body.slice(), promise)
+
+        promise.futureResult.whenComplete { response in
+          switch response {
+            case .success(let bytes):
+              context.write(self.wrapOutboundOut(.body(.byteBuffer(bytes.slice()))), promise: nil)
+              self.completeResponse(context)
+
+            case .failure(let error):
+              fatalError("Handler failed: \(error)")
+          }
+        }
     }
   }
 

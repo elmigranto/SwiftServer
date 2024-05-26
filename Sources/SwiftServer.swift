@@ -3,13 +3,13 @@ import NIOHTTP1
 import NIOPosix
 
 struct SwiftServer {
-  private let handler: (HTTPRequestHead, ByteBuffer) -> ByteBuffer
+  private let handler: (HTTPRequestHead, ByteBuffer, EventLoopPromise<ByteBuffer>) -> Void
 
-  init (_ handler: @escaping (HTTPRequestHead, ByteBuffer) -> ByteBuffer) {
+  init (_ handler: @escaping (HTTPRequestHead, ByteBuffer, EventLoopPromise<ByteBuffer>) -> Void) {
     self.handler = handler
   }
 
-  func listen (hostname: String, portNumber: UInt16) throws {
+  func listen (hostname: String, portNumber: UInt16) async throws -> EventLoopFuture<Void> {
     let socketBootstrap = ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
     // Specify backlog and enable SO_REUSEADDR for the server itself
       .serverChannelOption(ChannelOptions.backlog, value: 256)
@@ -23,17 +23,16 @@ struct SwiftServer {
       .childChannelOption(ChannelOptions.maxMessagesPerRead, value: 1)
       .childChannelOption(ChannelOptions.allowRemoteHalfClosure, value: true)
 
-    let channel = try socketBootstrap.bind(host: hostname, port: Int(portNumber)).wait()
+    let channel = try await socketBootstrap.bind(host: hostname, port: Int(portNumber)).get()
     guard let channelLocalAddress = channel.localAddress else {
       fatalError("Address was unable to bind. Please check that the socket was not closed or that the address family was understood.")
     }
 
     print("Server started and listening on \(channelLocalAddress)")
-
-    // This will never unblock as we don't close the ServerChannel
-    try channel.closeFuture.wait()
+    return channel.closeFuture
   }
 
+  @Sendable
   private func childChannelInitializer(_ channel: Channel) -> EventLoopFuture<Void> {
     return channel.pipeline.configureHTTPServerPipeline(withErrorHandling: true).flatMap {
       channel.pipeline.addHandler(TestHandler(handler))
