@@ -20,15 +20,25 @@ struct Postgres {
   }
 
   // TODO: Client will rety forever when it fails to connect to Postrges.
-  func now () async -> Date {
-    do {
-      let sequence = try await client.query("select now()")
-      let row = try await sequence.collect().first!
+  func lease<T> (_ work: (QueryRunner) async throws -> T) async throws -> T {
+    return try await client.withConnection { try await work(QueryRunner($0)) }
+  }
+}
 
-      return try row.decode(Date.self)
-    }
-    catch {
-      fatalError("Query failed: \(String(reflecting: error))")
-    }
+protocol InitableFromRow {
+  init(from row: PostgresRow) throws
+}
+
+struct QueryRunner {
+  private let connection: PostgresConnection
+
+  init (_ connection: PostgresConnection) {
+    self.connection = connection
+  }
+
+  func zeroOrMore<T: InitableFromRow> (_ queryText: String) async throws -> [T] {
+    let result = try await connection.query(queryText).get()
+
+    return try result.rows.map { try T.init(from: $0) }
   }
 }

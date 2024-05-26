@@ -35,7 +35,7 @@ struct SwiftServer {
   @Sendable
   private func childChannelInitializer(_ channel: Channel) -> EventLoopFuture<Void> {
     return channel.pipeline.configureHTTPServerPipeline(withErrorHandling: true).flatMap {
-      channel.pipeline.addHandler(TestHandler(handler))
+      channel.pipeline.addHandler(SwiftServerHandler(handler))
     }
   }
 }

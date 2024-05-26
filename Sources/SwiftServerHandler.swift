@@ -1,7 +1,7 @@
 import NIOCore
 import NIOHTTP1
 
-final class TestHandler : ChannelInboundHandler {
+final class SwiftServerHandler : ChannelInboundHandler {
   typealias InboundIn = HTTPServerRequestPart
   typealias OutboundOut = HTTPServerResponsePart
 
@@ -11,6 +11,10 @@ final class TestHandler : ChannelInboundHandler {
   private var head = HTTPRequestHead(version: .http1_1, method: .GET, uri: "")
   private var body = ByteBuffer()
 
+  // TODO: Update handlers to distinguish between:
+  //         - 200 for successes;
+  //         - 400 for malformed requests (must not be retried client-side);
+  //         - 500 for server errors (can be retried client-side).
   /// `(request) -> response` function.
   private let handler: (HTTPRequestHead, ByteBuffer, EventLoopPromise<ByteBuffer>) -> Void
 
@@ -45,7 +49,7 @@ final class TestHandler : ChannelInboundHandler {
               self.completeResponse(context)
 
             case .failure(let error):
-              fatalError("Handler failed: \(error)")
+              fatalError("Handler failed: \(String(reflecting: error))")
           }
         }
     }
